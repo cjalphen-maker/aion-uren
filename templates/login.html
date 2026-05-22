@@ -1,0 +1,59 @@
+{# Inlogpagina — staat los van base.html voor schonere uitstraling #}
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inloggen · AIon Uren</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="auth-body">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <p class="eyebrow">Uren administratie</p>
+        <h1>AI<span class="brand-accent">on</span></h1>
+        <p class="auth-tagline">Ai Transformatie voor <em>Makelaars</em></p>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-stack">
+          {% for category, msg in messages %}
+            <div class="flash flash-{{ category }}">{{ msg }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="POST" class="auth-form">
+        <label>
+          <span>E-mail</span>
+          <input type="email" name="email" required autofocus autocomplete="username">
+        </label>
+        <label>
+          <span>Wachtwoord</span>
+          <input type="password" name="password" required autocomplete="current-password">
+        </label>
+        <button type="submit" class="btn btn-primary btn-block">Inloggen</button>
+      </form>
+
+      <div class="auth-hint">
+        Toegang nodig? Neem contact op met je beheerder.
+      </div>
+    </div>
+    <div class="auth-side">
+      <blockquote>
+        <p>Tijd die je vastlegt is <em>tijd die je terugkrijgt.</em></p>
+        <cite>— AIon Uren</cite>
+      </blockquote>
+      <div class="auth-side-footer">
+        <a href="https://www.switchaion.nl" target="_blank" rel="noopener">switchaion.nl ↗</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
