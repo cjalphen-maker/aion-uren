@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Overzicht</p>
+    <h1 class="page-title">Goedendag, {{ current_user.name.split(' ')[0] }}.</h1>
+  </div>
+</div>
+
+{# Lopende timer banner #}
+{% if running %}
+<div class="timer-banner">
+  <div>
+    <span class="pulse"></span>
+    <strong>Timer loopt</strong> op <em>{{ running.project_name }}</em>
+    <span class="muted">— gestart om {{ running.start_time.strftime('%H:%M') }}</span>
+  </div>
+  <form method="POST" action="{{ url_for('timer_stop') }}">
+    <button type="submit" class="btn btn-dark">Timer stoppen</button>
+  </form>
+</div>
+{% endif %}
+
+{# KPI cards #}
+<div class="grid grid-3">
+  <div class="card kpi">
+    <p class="kpi-label">Deze week</p>
+    <p class="kpi-value">{{ "%.1f"|format(week_hours) }}<span class="kpi-unit">u</span></p>
+    <p class="kpi-meta">geregistreerde uren</p>
+  </div>
+  <div class="card kpi">
+    <p class="kpi-label">Mijn ingediend</p>
+    <p class="kpi-value">{{ pending_own }}</p>
+    <p class="kpi-meta">wacht op goedkeuring</p>
+  </div>
+  {% if current_user.role in ['admin', 'manager'] %}
+  <div class="card kpi accent">
+    <p class="kpi-label">Te beoordelen</p>
+    <p class="kpi-value">{{ pending_review }}</p>
+    <p class="kpi-meta">
+      <a href="{{ url_for('approvals') }}">naar goedkeuring →</a>
+    </p>
+  </div>
+  {% else %}
+  <div class="card kpi">
+    <p class="kpi-label">Snelle actie</p>
+    <p class="kpi-value" style="font-size: 1.4rem; padding-top: 0.5rem;">
+      <a href="{{ url_for('time_entries') }}" class="btn btn-primary">Uren registreren</a>
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+{# Recente uren #}
+<section class="section">
+  <h2 class="section-title">Mijn laatste uren</h2>
+  {% if recent %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Datum</th>
+        <th>Project</th>
+        <th>Uren</th>
+        <th>Status</th>
+        <th>Omschrijving</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in recent %}
+      <tr>
+        <td>{{ e.work_date.strftime('%d-%m-%Y') }}</td>
+        <td>{{ e.client_name }} <span class="muted">·</span> {{ e.project_name }}</td>
+        <td class="num">{{ "%.2f"|format(e.hours) }}</td>
+        <td><span class="status status-{{ e.status }}">{{ e.status }}</span></td>
+        <td class="truncate">{{ e.description or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Nog geen uren geregistreerd. <a href="{{ url_for('time_entries') }}">Begin nu →</a></p>
+  {% endif %}
+</section>
+
+{% endblock %}

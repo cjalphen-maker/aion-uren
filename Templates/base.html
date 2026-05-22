@@ -1,0 +1,65 @@
+{# Basis layout — alle pagina's erven hiervan #}
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Uren{% endblock %} · AIon Uren</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% if current_user %}
+  <header class="topbar">
+    <a href="{{ url_for('dashboard') }}" class="brand">
+      <span class="brand-name">AI<span class="brand-accent">on</span></span>
+      <span class="brand-sub">Uren</span>
+    </a>
+    <nav class="nav">
+      <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a>
+      <a href="{{ url_for('time_entries') }}" class="{% if request.endpoint == 'time_entries' %}active{% endif %}">Mijn uren</a>
+      {% if current_user.role in ['admin', 'manager'] %}
+        <a href="{{ url_for('approvals') }}" class="{% if request.endpoint == 'approvals' %}active{% endif %}">Goedkeuring</a>
+        <a href="{{ url_for('projects_admin') }}" class="{% if request.endpoint == 'projects_admin' %}active{% endif %}">Projecten</a>
+      {% endif %}
+      <a href="{{ url_for('reports') }}" class="{% if request.endpoint == 'reports' %}active{% endif %}">Rapportage</a>
+      {% if current_user.role == 'admin' %}
+        <a href="{{ url_for('users_admin') }}" class="{% if request.endpoint == 'users_admin' %}active{% endif %}">Gebruikers</a>
+      {% endif %}
+    </nav>
+    <div class="user-box">
+      <div class="user-info">
+        <div class="user-name">{{ current_user.name }}</div>
+        <div class="user-role">{{ current_user.role }}</div>
+      </div>
+      <a href="{{ url_for('logout') }}" class="logout-link" title="Uitloggen">↗</a>
+    </div>
+  </header>
+  {% endif %}
+
+  <main class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+        {% for category, msg in messages %}
+          <div class="flash flash-{{ category }}">{{ msg }}</div>
+        {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  {% if current_user %}
+  <footer class="footer">
+    <div class="footer-inner">
+      <span><strong>AIon</strong> · Ai Transformatie voor Makelaars</span>
+      <span class="footer-sep">·</span>
+      <a href="https://www.switchaion.nl" target="_blank" rel="noopener">switchaion.nl</a>
+    </div>
+  </footer>
+  {% endif %}
+</body>
+</html>
