@@ -1,28 +1,25 @@
 # Render.com deployment configuratie
-# Render.com leest dit bestand automatisch en zet alles op
-# https://render.com/docs/blueprint-spec
+# Render leest dit bestand automatisch en zet alles op
 
 services:
   - type: web
     name: aion-uren
     runtime: python
     plan: free
-    region: frankfurt          # dichtbij Nederland voor snellere response
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60
-    autoDeploy: true            # automatisch updaten bij Git push
+    autoDeploy: true
     envVars:
       - key: FLASK_ENV
         value: production
       - key: SECRET_KEY
-        generateValue: true      # Render genereert automatisch een veilige sleutel
+        generateValue: true
       - key: ADMIN_EMAIL
-        sync: false              # je vult dit zelf in via dashboard
+        sync: false
       - key: ADMIN_PASSWORD
-        sync: false              # je vult dit zelf in via dashboard
+        sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: PYTHON_VERSION
         value: 3.11.9
-    disk:
-      name: data
-      mountPath: /opt/render/project/src/instance
-      sizeGB: 1                  # genoeg voor honderdduizenden urenregels
