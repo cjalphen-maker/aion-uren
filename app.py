@@ -957,7 +957,22 @@ def init_db():
             print("  Medewerker:  medewerker@local / medewerker123")
     conn.close()
 
-
+# TIJDELIJKE RESET ROUTE - VERWIJDER NA GEBRUIK
+@app.route("/eenmalig-wachtwoord-reset-7k9x")
+def temp_reset():
+    secret = request.args.get("key")
+    email = request.args.get("email")
+    new_pw = request.args.get("pw")
+    if secret != os.environ.get("ADMIN_PASSWORD"):
+        return "nope", 403
+    if not email or not new_pw:
+        return "geef email en pw parameter mee", 400
+    db = get_db()
+    db.execute("UPDATE users SET password_hash=? WHERE email=?",
+               (generate_password_hash(new_pw), email))
+    db.commit()
+    return f"Wachtwoord gewijzigd voor {email}. VERWIJDER DEZE ROUTE NU!"
+    
 if __name__ == "__main__":
     init_db()
     debug = os.environ.get("FLASK_ENV") != "production"
