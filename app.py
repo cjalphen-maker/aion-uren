@@ -1,7 +1,7 @@
 """
 Uren Administratie Webapp
 --------------------------
-Flask + SQLite (standaardbibliotheek) + Rolgebaseerde rechten
+Flask + SQLite (lokaal) of PostgreSQL (productie) + Rolgebaseerde rechten
 
 Functies:
 - Inloggen met wachtwoord-hashing (werkzeug)
@@ -23,6 +23,7 @@ import os
 import sqlite3
 import csv
 import io
+import re
 from datetime import datetime, date, timedelta
 from functools import wraps
 
@@ -32,11 +33,21 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# PostgreSQL ondersteuning (alleen als DATABASE_URL gezet is)
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+    PSYCOPG_AVAILABLE = True
+except ImportError:
+    PSYCOPG_AVAILABLE = False
+
 # ============================================================
 #  CONFIG
 # ============================================================
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, "instance", "uren.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+USE_POSTGRES = bool(DATABASE_URL and PSYCOPG_AVAILABLE)
 
 app = Flask(__name__)
 
@@ -54,15 +65,47 @@ app.config.update(
 
 
 # ============================================================
-#  DATABASE — sqlite3 uit standaardbibliotheek
+#  DATABASE ABSTRACTIE — werkt met SQLite EN PostgreSQL
 # ============================================================
+class DBConnection:
+    """Wrapper die SQLite en PostgreSQL achter één interface zet."""
+
+    def __init__(self):
+        if USE_POSTGRES:
+            self.conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=False)
+            self.kind = "postgres"
+        else:
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+            self.conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            self.kind = "sqlite"
+
+    def _translate(self, sql):
+        """Vervang ? door %s voor PostgreSQL."""
+        if self.kind == "postgres":
+            return sql.replace("?", "%s")
+        return sql
+
+    def execute(self, sql, params=()):
+        sql = self._translate(sql)
+        if self.kind == "postgres":
+            cur = self.conn.cursor()
+            cur.execute(sql, params)
+            return cur
+        return self.conn.execute(sql, params)
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
 def get_db():
     """Open één verbinding per request."""
     if "db" not in g:
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        g.db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = DBConnection()
     return g.db
 
 
@@ -73,7 +116,8 @@ def close_db(exception=None):
         db.close()
 
 
-SCHEMA = """
+# Schema — PostgreSQL gebruikt SERIAL i.p.v. INTEGER AUTOINCREMENT
+SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
@@ -121,16 +165,66 @@ CREATE INDEX IF NOT EXISTS idx_time_user_date ON time_entries(user_id, work_date
 CREATE INDEX IF NOT EXISTS idx_time_status ON time_entries(status);
 """
 
+SCHEMA_POSTGRES = """
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'medewerker',
+    manager_id INTEGER REFERENCES users(id),
+    active INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS clients (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    contact TEXT,
+    active INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    hourly_rate REAL DEFAULT 0,
+    active INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS time_entries (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    work_date DATE NOT NULL,
+    start_time TIMESTAMP,
+    end_time TIMESTAMP,
+    hours REAL NOT NULL DEFAULT 0,
+    description TEXT,
+    status TEXT DEFAULT 'ingediend',
+    reviewed_by INTEGER REFERENCES users(id),
+    reviewed_at TIMESTAMP,
+    review_note TEXT,
+    is_running INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_time_user_date ON time_entries(user_id, work_date);
+CREATE INDEX IF NOT EXISTS idx_time_status ON time_entries(status);
+"""
+
 
 # ============================================================
 #  HELPERS
 # ============================================================
 def query_one(sql, params=()):
-    return get_db().execute(sql, params).fetchone()
+    cur = get_db().execute(sql, params)
+    return cur.fetchone()
 
 
 def query_all(sql, params=()):
-    return get_db().execute(sql, params).fetchall()
+    cur = get_db().execute(sql, params)
+    return cur.fetchall()
 
 
 def execute(sql, params=()):
@@ -720,7 +814,7 @@ def client_create():
     try:
         execute("INSERT INTO clients (name, contact) VALUES (?, ?)", (name, contact))
         flash("Klant aangemaakt.", "success")
-    except sqlite3.IntegrityError:
+    except Exception:
         flash("Deze klantnaam bestaat al.", "error")
     return redirect(url_for("projects_admin"))
 
@@ -769,16 +863,40 @@ def not_found(e):
 #  INIT
 # ============================================================
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
-    conn.commit()
+    """Schema aanmaken en evt. demo-data invoegen, voor zowel SQLite als PostgreSQL."""
+    if USE_POSTGRES:
+        conn = psycopg.connect(DATABASE_URL, autocommit=True)
+        # Schema in stukken uitvoeren (psycopg ondersteunt geen executescript)
+        with conn.cursor() as cur:
+            # Verwijder commentaar-blokken en splits op puntkomma's
+            statements = [s.strip() for s in SCHEMA_POSTGRES.split(";") if s.strip()]
+            for stmt in statements:
+                cur.execute(stmt)
+        placeholder = "%s"
+    else:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
+        conn.executescript(SCHEMA_SQLITE)
+        conn.commit()
+        placeholder = "?"
 
     is_production = os.environ.get("FLASK_ENV") == "production"
 
+    def _exec(cur, sql, params=()):
+        cur.execute(sql.replace("?", placeholder), params)
+
+    def _fetchone(cur):
+        return cur.fetchone()
+
     # Bij lege database: admin aanmaken
-    cur = conn.execute("SELECT COUNT(*) FROM users")
-    if cur.fetchone()[0] == 0:
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users")
+    row = cur.fetchone()
+    count = row[0] if isinstance(row, tuple) or hasattr(row, '__getitem__') else 0
+    if hasattr(row, 'keys'):  # dict_row of sqlite3.Row
+        count = list(row)[0] if isinstance(row, sqlite3.Row) else list(row.values())[0]
+
+    if count == 0:
         if is_production:
             # Productie: alleen één admin met wachtwoord uit env-var
             admin_email = os.environ.get("ADMIN_EMAIL", "admin@local")
@@ -793,42 +911,45 @@ def init_db():
                 print(f" Wachtwoord: {admin_password}")
                 print(" Log in en wijzig dit wachtwoord direct!")
                 print("=" * 60)
-            conn.execute(
+            _exec(cur,
                 "INSERT INTO users (email, name, role, password_hash) VALUES "
                 "(?, ?, 'admin', ?)",
                 (admin_email, "Beheerder", generate_password_hash(admin_password)),
             )
-            conn.commit()
+            if not USE_POSTGRES:
+                conn.commit()
         else:
             # Lokaal: drie demo-accounts en wat testdata
             admin_hash = generate_password_hash("admin123")
             manager_hash = generate_password_hash("manager123")
             emp_hash = generate_password_hash("medewerker123")
 
-            conn.execute(
+            _exec(cur,
                 "INSERT INTO users (email, name, role, password_hash) VALUES "
-                "(?, ?, 'admin', ?)", ("admin@local", "Beheerder", admin_hash)
-            )
-            conn.execute(
+                "(?, ?, 'admin', ?)", ("admin@local", "Beheerder", admin_hash))
+            _exec(cur,
                 "INSERT INTO users (email, name, role, password_hash) VALUES "
-                "(?, ?, 'manager', ?)", ("manager@local", "Marieke Manager", manager_hash)
-            )
-            manager_id = conn.execute(
-                "SELECT id FROM users WHERE email='manager@local'"
-            ).fetchone()[0]
-            conn.execute(
+                "(?, ?, 'manager', ?)", ("manager@local", "Marieke Manager", manager_hash))
+
+            cur.execute("SELECT id FROM users WHERE email='manager@local'")
+            row = cur.fetchone()
+            manager_id = row[0] if isinstance(row, (tuple, sqlite3.Row)) else row['id']
+
+            _exec(cur,
                 "INSERT INTO users (email, name, role, manager_id, password_hash) VALUES "
                 "(?, ?, 'medewerker', ?, ?)",
-                ("medewerker@local", "Pieter Medewerker", manager_id, emp_hash),
-            )
+                ("medewerker@local", "Pieter Medewerker", manager_id, emp_hash))
 
-            conn.execute("INSERT INTO clients (name, contact) VALUES (?, ?)",
-                         ("Acme B.V.", "info@acme.nl"))
-            client_id = conn.execute("SELECT id FROM clients WHERE name='Acme B.V.'").fetchone()[0]
-            conn.execute("INSERT INTO projects (name, client_id, hourly_rate) VALUES (?, ?, ?)",
-                         ("Website redesign", client_id, 85))
-            conn.execute("INSERT INTO projects (name, client_id, hourly_rate) VALUES (?, ?, ?)",
-                         ("Onderhoud", client_id, 75))
+            _exec(cur, "INSERT INTO clients (name, contact) VALUES (?, ?)",
+                  ("Acme B.V.", "info@acme.nl"))
+            cur.execute("SELECT id FROM clients WHERE name='Acme B.V.'")
+            row = cur.fetchone()
+            client_id = row[0] if isinstance(row, (tuple, sqlite3.Row)) else row['id']
+
+            _exec(cur, "INSERT INTO projects (name, client_id, hourly_rate) VALUES (?, ?, ?)",
+                  ("Website redesign", client_id, 85))
+            _exec(cur, "INSERT INTO projects (name, client_id, hourly_rate) VALUES (?, ?, ?)",
+                  ("Onderhoud", client_id, 75))
             conn.commit()
             print("✓ Database aangemaakt met demo-data")
             print("  Admin:       admin@local / admin123")
